@@ -1,4 +1,7 @@
 const { Point, Geocoder } = require('where');
+const { readFile } = require('node:fs/promises');
+const promiseRetry = require('promise-retry')
+const csvjson = require('csvjson');
 
 function isUnderway(state) {
   if (state === 'motoring') {
@@ -131,14 +134,14 @@ function addHourlies(trips) {
   return trips;
 }
 
-function addDatapoints(trips, key, values) {
+function addDatapoints(trips, key, values, minuteWindow = 2) {
   let currentTrip = trips[0];
   values.forEach(({time, value}) => {
     if (!currentTrip) {
       return;
     }
     currentTrip.events.forEach(state => {
-      if (minutesElapsed(time, state.time) < 2) {
+      if (minutesElapsed(time, state.time) < minuteWindow) {
         state[key] = value;
         if (state === currentTrip.events[currentTrip.events.length - 1]) {
           // Trip ends here
@@ -185,6 +188,26 @@ function collectPositions(trips, client) {
         trip.startPosition = trip.events[0].position;
         trip.endPosition = trip.events[trip.events.length - 1].position;
       });
+      return trips;
+    });
+}
+
+function collectFixtype(trips, client) {
+  if (trips.length === 0) {
+    return Promise.resolve(trips);
+  }
+  const startTime = trips[0].start.toISOString();
+  const endTime = trips[trips.length - 1].end.toISOString();
+  let query = `
+    select first(stringValue) as "value"
+    from "navigation.gnss.type"
+    where time >= '${startTime}' and time <= '${endTime}'
+    group by time(1m)
+  `;
+  return client
+    .query(query)
+    .then(result => {
+      addDatapoints(trips, 'fixType', result.filter(p => p), 30)
       return trips;
     });
 }
@@ -241,6 +264,32 @@ function collectSpeed(trips, client) {
         };
       });
       addDatapoints(trips, 'speed', values.filter(p => p))
+      return trips;
+    });
+}
+
+function collectLog(trips, client) {
+  if (trips.length === 0) {
+    return Promise.resolve(trips);
+  }
+  const startTime = trips[0].start.toISOString();
+  const endTime = trips[trips.length - 1].end.toISOString();
+  let query = `
+    select mean(value) as "value"
+    from "navigation.trip.log"
+    where time >= '${startTime}' and time <= '${endTime}'
+    group by time(1m)
+  `;
+  return client
+    .query(query)
+    .then(result => {
+      const values = result.map(entry => {
+        return {
+          time: new Date(entry.time),
+          value: (entry.value * 0.0005399568).toFixed(1),
+        };
+      });
+      addDatapoints(trips, 'log', values.filter(p => p))
       return trips;
     });
 }
@@ -302,11 +351,8 @@ function collectWind(trips, client) {
       return client
         .query(directionQuery)
         .then(directionResult => {
-          const directionValues = result.map(entry => {
+          const directionValues = directionResult.map(entry => {
             let degrees = (entry.value * 180 / Math.PI);
-            if (degrees > 360) {
-              degrees = degrees - 360;
-            }
             return {
               time: new Date(entry.time),
               value: degrees.toFixed(0).padStart(3, 0),
@@ -318,50 +364,151 @@ function collectWind(trips, client) {
     })
 }
 
+function collectAnnotations(trips) {
+  return readFile('annotations.json', 'utf-8')
+    .then(data => JSON.parse(data))
+    .catch(() => [])
+    .then(annotations => {
+      trips.forEach(t => {
+        t.events.forEach(e => {
+          const timestamp = e.time.toISOString();
+          const annotation = annotations.find(a => a.time === timestamp);
+          if (annotation) {
+            e.originalState = e.state;
+            e.state = annotation.value;
+          }
+        });
+      });
+      return trips;
+    });
+}
+
+function parseSailloggerTime(time) {
+  const [dateString, timeString] = time.split(', ');
+  const [day, month, year] = dateString.split('/');
+  return new Date(`${year}-${month}-${day}T${timeString}`);
+}
+
+function collectSaillogger(trips) {
+  return readFile('saillog.csv', 'utf-8')
+    .then(data => csvjson.toObject(data, {
+        quote     : '"',
+    }))
+    .catch(() => [])
+    .then(lines => {
+      const logs = lines.map((line) => {
+        return {
+          startLocation: line.From,
+          endLocation: line.To,
+          start: parseSailloggerTime(line.Started),
+          end: parseSailloggerTime(line.Ended),
+        };
+      });
+      trips.forEach(t => {
+        logs.find(l => {
+          const elapsedStart = minutesElapsed(t.start, l.start);
+          const elapsedEnd = minutesElapsed(t.end, l.end);
+          if (elapsedStart < 60) {
+            t.startLocation = l.startLocation;
+          }
+          if (elapsedEnd < 60) {
+            t.endLocation = l.endLocation;
+          }
+        });
+      });
+      return trips;
+    });
+}
+
 function positionLabel(location) {
+  const parts = [];
+  if (location.address.leisure) {
+    parts.push(location.address.leisure);
+  }
   if (location.address.village) {
-    return location.address.village;
+    parts.push(location.address.village);
+  }
+  if (location.address.hamlet) {
+    parts.push(location.address.hamlet);
+  }
+  if (location.address.isolated_dwelling && parts.length === 0) {
+    parts.push(location.address.isolated_dwelling);
+  }
+  if (location.address.suburb) {
+    parts.push(location.address.suburb);
   }
   if (location.address.city) {
-    if (location.address.suburb) {
-      return `${location.address.suburb}, ${location.address.city}`;
-    }
-    return location.address.city;
+    parts.push(location.address.city);
   }
+  if (parts.length) {
+    return parts.join(', ');
+  }
+  console.log('FALLBACK');
+  console.log(location);
   return location.display_name;
 }
 
+function retriedGeocode(geocoder, position) {
+  return Promise.reject(new Error('Disabled'));
+  return promiseRetry((retry, number) => {
+    return geocoder.fromPoint(position)
+      .catch((e) => {
+        console.log(e);
+        retry(e);
+      });
+  });
+} 
+
 function geoCode(trips) {
   const geocoder = new Geocoder();
-  return Promise.all(trips.map(t => {
-    return geocoder.fromPoint(t.startPosition)
-      .then(start => {
-        t.startLocation = positionLabel(start);
+  return trips.reduce((cur, t, idx) => {
+    return cur
+      .then(() => {
+        if (t.startLocation) {
+          return Promise.resolve();
+        }
+        if (idx === 0) {
+          // For the first entry we need to geocode start location
+          return retriedGeocode(geocoder, t.startPosition)
+            .then(start => {
+              t.startLocation = positionLabel(start);
+              return Promise.resolve();
+            }, (e) => {
+              // Geocoding failed
+              t.startLocation = t.startPosition.toString();
+            });
+        }
+        // For the rest, we can use previous end location
+        t.startLocation = trips[idx - 1].endLocation;
         return Promise.resolve();
-      }, () => {
-        // Geocoding failed
-        t.startLocation = t.startPosition.toString();
       })
       .then(() => {
-        return geocoder.fromPoint(t.endPosition)
-      })
-      .then(end => {
-        t.endLocation = positionLabel(end);
-      }, () => {
-        // Geocoding failed
-        t.endLocation = t.endPosition.toString();
+        if (t.endLocation) {
+          return Promise.resolve();
+        }
+        return retriedGeocode(geocoder, t.endPosition)
+        .then(end => {
+          t.endLocation = positionLabel(end);
+        }, (e) => {
+          // Geocoding failed
+          t.endLocation = t.endPosition.toString();
+        });
       });
-  }))
+  }, Promise.resolve())
   .then(() => trips);
 }
 
 module.exports = {
   collectTrips,
   collectPositions,
+  collectFixtype,
   collectSpeed,
+  collectLog,
   collectHeading,
   collectBarometer,
   collectWind,
+  collectAnnotations,
+  collectSaillogger,
   addHourlies,
   geoCode,
 };

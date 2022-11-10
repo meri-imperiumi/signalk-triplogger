@@ -1,0 +1,48 @@
+<!doctype HTML>
+<html lang="en">
+  <head>
+    <title>Logbook</title>
+    <link rel="stylesheet" href="log.css">
+    <script src="editable.js"></script>
+  </head>
+  <body>
+    {{#trips}}
+    <table>
+      <thead>
+        <tr>
+          <th>From</th>
+          <td colspan="5">{{#formatDate}}{{ start }}{{/formatDate}} {{ startLocation }}</td>
+          <th>To</th>
+          <td colspan="2">{{#formatDate}}{{ end }}{{/formatDate}} {{ endLocation }}</td>
+        </tr>
+        <tr class="headings">
+          <th>Time</th>
+          <th>Course</th>
+          <th>Speed</th>
+          <th>Log</th>
+          <th>Wind</th>
+          <th>Baro</th>
+          <th>Coordinates</th>
+          <th>Fix</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#events}}
+        <tr data-time="{{ time }}">
+          <td>{{#formatTime}}{{ time }}{{/formatTime}}</td>
+          <td>{{ heading }}&deg;</td>
+          <td>{{ speed }}kt</td>
+          <td>{{ log }}NM</td>
+          <td>{{#formatWind}}{{ windSpeed }}kt {{ windDirection }}&deg;{{/formatWind}}</td>
+          <td>{{#formatBarometer}}{{ barometer }}{{/formatBarometer}} hPa</td>
+          <td>{{#formatCoordinates}}{{ position.lat }} {{ position.lon }}{{/formatCoordinates}}</td>
+          <td>{{ fixType }}</td>
+          <td contenteditable>{{^hourly}}{{#formatState}}{{ state }}{{/formatState}}{{/hourly}}</td>
+        </tr>
+        {{/events}}
+      </tbody>
+    </table>
+    {{/trips}}
+  </body>
+</html>

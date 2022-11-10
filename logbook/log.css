@@ -1,0 +1,44 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+}
+table {
+  border-collapse: collapse;
+  width: 100vw;
+  margin-bottom: 2em;
+}
+thead th,
+thead td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+thead td {
+  min-width: 42vw;
+  max-width: 42vw;
+}
+td, th {
+  padding: 2px;
+  border: 0;
+  text-align: left;
+}
+tbody td,
+tbody th {
+  border-right: 1px solid black;
+}
+thead tr.headings th {
+  border-bottom: 1px solid black;
+  border-right: 1px solid black;
+}
+td {
+  color: navy;
+  font-family: cursive;
+}
+tbody tr:nth-of-type(even) {
+  background-color: #eee;
+}
+
+@media print {
+  table {
+    page-break-before: always;
+  }
+}

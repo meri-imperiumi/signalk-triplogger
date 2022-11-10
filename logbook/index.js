@@ -31,10 +31,8 @@ const influxOptions = {
   database,
 };
 const startDate = '2022-04-15T06:00:00Z';
-//const startDate = '2022-09-08T06:00:00Z';
+// const startDate = '2022-09-08T06:00:00Z';
 const endDate = '2022-09-16T18:00:00Z';
-
-
 
 const client = new Influx.InfluxDB(influxOptions);
 client
@@ -54,6 +52,9 @@ client
     return tripFunctions.collectSpeed(trips, client);
   })
   .then(trips => {
+    return tripFunctions.collectLog(trips, client);
+  })
+  .then(trips => {
     return tripFunctions.collectHeading(trips, client);
   })
   .then(trips => {
@@ -66,13 +67,26 @@ client
     return tripFunctions.collectPositions(trips, client);
   })
   .then(trips => {
+    return tripFunctions.collectFixtype(trips, client);
+  })
+  .then(trips => {
+    return tripFunctions.collectAnnotations(trips);
+  })
+  .then(trips => {
+    return tripFunctions.collectSaillogger(trips);
+  })
+  .then(trips => {
     return tripFunctions.geoCode(trips);
   })
   .then(trips => {
     return writeFile('2022.json', JSON.stringify(trips, 0, 2), 'utf-8')
       .then(() => trips);
   })
+  .then(() => {
+    console.log('DONE');
+    process.exit(0);
+  })
   .catch(e => {
-    console.error(e.message);
+    console.error(e);
     process.exit(1);
   });
