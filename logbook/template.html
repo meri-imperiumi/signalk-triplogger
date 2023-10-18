@@ -20,7 +20,7 @@
           <th>Course</th>
           <th>Speed</th>
           <th>Log</th>
-          <th>Wind</th>
+          <th>Weather</th>
           <th>Baro</th>
           <th>Coordinates</th>
           <th>Fix</th>
@@ -29,19 +29,35 @@
       </thead>
       <tbody>
         {{#events}}
-        <tr data-time="{{ time }}">
-          <td>{{#formatTime}}{{ time }}{{/formatTime}}</td>
+        <tr data-time="{{ datetime }}">
+          <td>{{#formatTime}}{{ datetime }}{{/formatTime}}</td>
           <td>{{ heading }}&deg;</td>
-          <td>{{ speed }}kt</td>
+          <td>{{ speed.sog }}kt</td>
           <td>{{ log }}NM</td>
-          <td>{{#formatWind}}{{ windSpeed }}kt {{ windDirection }}&deg;{{/formatWind}}</td>
+          <td>
+            Wind {{#formatWind}}{{ wind.speed }}kt {{ wind.direction }}&deg;{{/formatWind}}
+            {{#observations.seaState}}<br>Sea state {{observations.seaState}}{{/observations.seaState}}
+            {{#observations.cloudCoverage}}<br>Clouds {{observations.cloudCoverage}}/8{{/observations.cloudCoverage}}
+            {{#observations.visibility}}<br>Visibility {{observations.visibility}}{{/observations.visibility}}
+          </td>
           <td>{{#formatBarometer}}{{ barometer }}{{/formatBarometer}} hPa</td>
-          <td>{{#formatCoordinates}}{{ position.lat }} {{ position.lon }}{{/formatCoordinates}}</td>
-          <td>{{ fixType }}</td>
-          <td contenteditable>{{^hourly}}{{#formatState}}{{ state }}{{/formatState}}{{/hourly}}</td>
+          <td>{{#formatCoordinates}}{{ position.latitude }} {{ position.longitude }}{{/formatCoordinates}}</td>
+          <td>{{ position.source }}</td>
+          <td contenteditable>
+            {{#text}}{{ text }} {{#author}}<br>-{{author}}{{/author}}{{/text}}
+            {{^text}}Hourly entry{{/text}}
+          </td>
         </tr>
         {{/events}}
       </tbody>
+      <tfoot>
+        <tr>
+          <th>Distance</th>
+          <td colspan="5">{{ miles }}NM</td>
+          <th>Engine hours</th>
+          <td colspan="2">{{ engineHours }}h</td>
+        </tr>
+      </tfoot>
     </table>
     {{/trips}}
   </body>

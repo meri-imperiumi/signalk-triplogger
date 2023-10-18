@@ -7,14 +7,20 @@ table {
   margin-bottom: 2em;
 }
 thead th,
-thead td {
+thead td,
+tfoot th,
+tfoot td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-thead td {
+thead td,
+tfoot td {
   min-width: 42vw;
   max-width: 42vw;
+}
+tfoot {
+  font-size: smaller;
 }
 td, th {
   padding: 2px;
