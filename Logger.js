@@ -23,6 +23,9 @@ class Logger {
   }
 
   inTrip() {
+    if (this.state === null && this.log.started && !this.log.ended) {
+      return true;
+    }
     if (this.state === 'sailing' || this.state === 'motoring') {
       return true;
     }
