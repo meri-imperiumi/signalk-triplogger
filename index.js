@@ -181,7 +181,7 @@ module.exports = (app) => {
               handleState(v.value);
             }
             if (v.path === 'navigation.position') {
-              if (Number.isNaN(Number(v.value.latitude))
+              if (!v.path || Number.isNaN(Number(v.value.latitude))
                 || Number.isNaN(Number(v.value.longitude))) {
                 return;
               }
