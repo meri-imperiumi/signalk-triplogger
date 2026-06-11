@@ -6,6 +6,8 @@ The plugin monitors vessel `navigation.state` as set by the [signalk-autostate](
 
 ## Changes
 
+* 1.3.0 (June 10th 2026)
+  - Don't start a new trip at startup if there's an ongoing one
 * 1.2.0 (April 27th 2023)
   - Added support for populating `navigation.log` for totals
 * 1.1.1 (February 28th 2023)
