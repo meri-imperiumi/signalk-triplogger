@@ -1,6 +1,10 @@
 # Changelog
 
-## [1.3.0]  - 2026-06-10
+## [1.3.1] - 2026-06-16
+
+- Added application icon for SK appstore
+
+## [1.3.0] - 2026-06-10
 
 - Don't start a new trip at startup if there's an ongoing one
 
