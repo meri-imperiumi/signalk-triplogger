@@ -16,6 +16,13 @@
     "signalk-category-utility"
   ],
   "signalk-plugin-enabled-by-default": true,
+  "signalk": {
+    "appIcon": "./doc/appicon.png",
+    "displayName": "Automatic Trip Length Logger",
+    "requires": [
+      "@meri-imperiumi/signalk-autostate"
+    ]
+  },
   "author": "Henri Bergius <henri.bergius@iki.fi>",
   "license": "MIT",
   "bugs": {
