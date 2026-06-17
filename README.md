@@ -6,4 +6,4 @@ The plugin monitors vessel `navigation.state` as set by the [signalk-autostate](
 
 ## Changes
 
-See <CHANGELOG.md>
+See [Changelog](CHANGELOG.md)
