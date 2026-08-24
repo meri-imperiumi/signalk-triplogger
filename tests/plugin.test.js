@@ -6,21 +6,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const makePlugin = require('../index');
 const { FakeSignalKApp, emitDelta } = require('./fake-app');
-
-/**
- * Wait `ms` milliseconds, resolving the returned promise.
- *
- * @param {number} ms
- * @returns {Promise<void>}
- */
-function wait(ms) {
-  return new Promise((r) => { setTimeout(r, ms); });
-}
 
 /**
  * Poll until `predicate` returns truthy, retrying every ~10ms up to `timeout`
@@ -79,6 +69,20 @@ function readLog(app, name) {
   return JSON.parse(readFileSync(join(app.dataPath, `${name}.json`), 'utf-8'));
 }
 
+/**
+ * Pre-seed a log file in the app's data dir before start, so the Logger
+ * loads an existing state instead of starting fresh. Used to make the
+ * "new trip" transition deterministic without racing two state emits.
+ *
+ * @param {FakeSignalKApp} app
+ * @param {string} name
+ * @param {object} contents
+ * @returns {void}
+ */
+function seedLog(app, name, contents) {
+  writeFileSync(join(app.dataPath, `${name}.json`), JSON.stringify(contents, null, 2));
+}
+
 test('creates a plugin object with the right id/name', () => {
   const app = new FakeSignalKApp();
   const plugin = makePlugin(app);
@@ -119,16 +123,19 @@ test('start sets an initial status message', () => {
 });
 
 test('transitioning into a trip resets the log and posts a status', async () => {
-  const { app, plugin } = makeStarted();
-  // A fresh current log is considered already in-trip, so first put the
-  // vessel into a non-trip state, then transition into a trip state.
-  emitDelta(app, {
-    context: 'vessels.self',
-    updates: [
-      { values: [{ path: 'navigation.state', value: 'anchored' }] },
-    ],
+  const app = new FakeSignalKApp();
+  // A fresh current log is considered already in-trip. To make the
+  // transition into a trip deterministic (instead of racing two async
+  // state emits), seed an *ended* current log so inTrip() starts false,
+  // then emit a single trip-starting state.
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
   });
-  await wait(5);
+  const plugin = makePlugin(app);
+  plugin.start({});
   emitDelta(app, {
     context: 'vessels.self',
     updates: [
@@ -148,19 +155,25 @@ test('transitioning into a trip resets the log and posts a status', async () => 
 });
 
 test('position updates append distance to the trip log and emit deltas', async () => {
-  const { app, plugin } = makeStarted({ totals: true });
-  // First establish a non-trip state so a fresh log isn't considered
-  // already in-trip, then transition into a trip state and move.
-  emitDelta(app, {
-    context: 'vessels.self',
-    updates: [{ values: [{ path: 'navigation.state', value: 'anchored' }] }],
+  const app = new FakeSignalKApp();
+  // Seed an ended current log so start isn't considered in-trip, then emit
+  // a single trip-starting state. This avoids racing two async state emits.
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
   });
-  await wait(5);
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true });
   emitDelta(app, {
     context: 'vessels.self',
     updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
   });
-  await wait(5);
+  // Wait for the new-trip reset to settle before sending positions.
+  await waitFor(
+    () => app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+  );
 
   // First position just establishes lastPosition; no distance yet.
   emitDelta(app, {
@@ -169,7 +182,6 @@ test('position updates append distance to the trip log and emit deltas', async (
       { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
     ],
   });
-  await wait(5);
 
   // Second position ~111m east of the first → appendTrip writes log files.
   emitDelta(app, {
@@ -199,17 +211,22 @@ test('position updates append distance to the trip log and emit deltas', async (
 });
 
 test('totals option also publishes navigation.log', async () => {
-  const { app, plugin } = makeStarted({ totals: true, totals_base: 100 });
-  emitDelta(app, {
-    context: 'vessels.self',
-    updates: [{ values: [{ path: 'navigation.state', value: 'anchored' }] }],
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
   });
-  await wait(5);
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true, totals_base: 100 });
   emitDelta(app, {
     context: 'vessels.self',
     updates: [{ values: [{ path: 'navigation.state', value: 'motoring' }] }],
   });
-  await wait(5);
+  await waitFor(
+    () => app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+  );
 
   emitDelta(app, {
     context: 'vessels.self',
@@ -217,7 +234,6 @@ test('totals option also publishes navigation.log', async () => {
       { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
     ],
   });
-  await wait(5);
   emitDelta(app, {
     context: 'vessels.self',
     updates: [
