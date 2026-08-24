@@ -4,8 +4,8 @@
   "description": "Log the length of the current trip",
   "main": "index.js",
   "scripts": {
-    "lint": "eslint .",
-    "test": "npm run lint"
+    "test": "node --test --test-force-exit \"tests/*.test.js\" && eslint .",
+    "lint": "eslint ."
   },
   "repository": {
     "type": "git",
