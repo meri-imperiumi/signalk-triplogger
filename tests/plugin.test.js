@@ -23,6 +23,33 @@ function wait(ms) {
 }
 
 /**
+ * Poll until `predicate` returns truthy, retrying every ~10ms up to `timeout`
+ * milliseconds. Resolves true on success, false on timeout. Useful for
+ * awaiting async plugin side-effects (file I/O) without fixed sleeps.
+ *
+ * @param {() => boolean} predicate
+ * @param {number} [timeout]
+ * @returns {Promise<boolean>}
+ */
+function waitFor(predicate, timeout = 500) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      if (predicate()) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start >= timeout) {
+        resolve(false);
+        return;
+      }
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
+/**
  * Build a started plugin instance wired to a fresh fake app with the
  * given settings (defaulted).
  *
@@ -108,7 +135,9 @@ test('transitioning into a trip resets the log and posts a status', async () => 
       { values: [{ path: 'navigation.state', value: 'sailing' }] },
     ],
   });
-  await wait(5);
+  await waitFor(
+    () => app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+  );
   plugin.stop();
   assert.ok(
     app.statusMessages.some(
@@ -149,7 +178,12 @@ test('position updates append distance to the trip log and emit deltas', async (
       { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
     ],
   });
-  await wait(10);
+  await waitFor(() => {
+    const tripValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
+    return !!tripValue;
+  });
 
   plugin.stop();
 
@@ -190,7 +224,12 @@ test('totals option also publishes navigation.log', async () => {
       { values: [{ path: 'navigation.position', value: { latitude: 60.002, longitude: 24.0 } }] },
     ],
   });
-  await wait(10);
+  await waitFor(() => {
+    const logValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.log' && v.value > 100);
+    return !!logValue;
+  });
   plugin.stop();
 
   const logMsgs = app.messages.filter(
