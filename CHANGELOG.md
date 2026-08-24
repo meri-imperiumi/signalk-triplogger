@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.2] - 2026-08-23
 
 ### Added
 - Added smoke tests for the plugin entry point (start/stop, subscription,
