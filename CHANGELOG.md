@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Option to publish the current trip log (`log_path`) and the total log
+  (`totals_path`) under configurable Signal K paths, for setups where the
+  standard `navigation.trip.log`/`navigation.log` paths are owned by another
+  provider. Non-standard paths are announced with `units: m` metadata
+
 ### Fixed
 - Don't overwrite the current trip log at startup: log preparation is now
   serialized so distance appends and state handling always run against the

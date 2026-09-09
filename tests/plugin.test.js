@@ -319,6 +319,158 @@ test('startup with an ongoing trip continues it instead of resetting to zero', a
   );
 });
 
+/**
+ * Flatten all value objects the app has received from the plugin.
+ * Meta-only messages have no `values`, so those updates are skipped.
+ *
+ * @param {FakeSignalKApp} app
+ * @returns {Array<{path: string, value: number}>}
+ */
+function emittedValues(app) {
+  return app.messages.flatMap(
+    ({ message }) => message.updates.filter((u) => u.values).flatMap((u) => u.values),
+  );
+}
+
+/**
+ * Flatten all meta entries the app has received from the plugin.
+ *
+ * @param {FakeSignalKApp} app
+ * @returns {Array<{path: string, value: object}>}
+ */
+function emittedMeta(app) {
+  return app.messages.flatMap(
+    ({ message }) => message.updates.filter((u) => u.meta).flatMap((u) => u.meta),
+  );
+}
+
+test('custom log_path publishes the trip log under the configured path', async () => {
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({
+    log_path: 'navigation.trip.currentTripLog',
+    totals: false,
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  await waitFor(
+    () => app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+  );
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(
+    () => emittedValues(app).some(
+      (v) => v.path === 'navigation.trip.currentTripLog' && v.value > 0,
+    ),
+  );
+  plugin.stop();
+
+  // The trip log is published under the configured custom path...
+  assert.ok(
+    emittedValues(app).some((v) => v.path === 'navigation.trip.currentTripLog'),
+    'no delta was emitted to navigation.trip.currentTripLog',
+  );
+  // ...and not under the standard path
+  assert.ok(
+    !emittedValues(app).some((v) => v.path === 'navigation.trip.log'),
+    'navigation.trip.log should not be written when log_path is set',
+  );
+  // The non-standard path is announced with units metadata
+  const tripMeta = emittedMeta(app).find((m) => m.path === 'navigation.trip.currentTripLog');
+  assert.ok(tripMeta, 'no meta was sent for the custom trip log path');
+  assert.strictEqual(tripMeta.value.units, 'm');
+});
+
+test('custom totals_path publishes the total under the configured path', async () => {
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({
+    totals: true,
+    totals_base: 100,
+    totals_path: 'navigation.log.clubTotal',
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'motoring' }] }],
+  });
+  await waitFor(
+    () => app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+  );
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.002, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(
+    () => emittedValues(app).some(
+      (v) => v.path === 'navigation.log.clubTotal' && v.value > 100,
+    ),
+  );
+  plugin.stop();
+
+  // The total is published under the configured custom path...
+  assert.ok(
+    emittedValues(app).some((v) => v.path === 'navigation.log.clubTotal'),
+    'no delta was emitted to navigation.log.clubTotal',
+  );
+  // ...and not under the standard path
+  assert.ok(
+    !emittedValues(app).some((v) => v.path === 'navigation.log'),
+    'navigation.log should not be written when totals_path is set',
+  );
+  // The trip log keeps its standard path unless configured otherwise
+  assert.ok(
+    emittedValues(app).some((v) => v.path === 'navigation.trip.log'),
+    'navigation.trip.log should still be emitted with only totals_path set',
+  );
+  // The non-standard path is announced with units metadata
+  const totalMeta = emittedMeta(app).find((m) => m.path === 'navigation.log.clubTotal');
+  assert.ok(totalMeta, 'no meta was sent for the custom totals path');
+  assert.strictEqual(totalMeta.value.units, 'm');
+  // No meta is needed for the standard trip path
+  assert.ok(
+    !emittedMeta(app).some((m) => m.path === 'navigation.trip.log'),
+    'standard paths should not get meta',
+  );
+});
+
+test('standard paths send no meta messages', () => {
+  const { app, plugin } = makeStarted();
+  assert.strictEqual(emittedMeta(app).length, 0);
+  plugin.stop();
+});
+
 test('stop clears subscriptions', () => {
   const { app, plugin } = makeStarted();
   assert.strictEqual(app.subscriptionmanager.subscriptions.length, 1);

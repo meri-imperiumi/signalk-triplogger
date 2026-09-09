@@ -72,6 +72,11 @@ module.exports = (app) => {
   }
 
   plugin.start = (options) => {
+    // Paths the logs are published under. Configure these when another
+    // provider owns the standard paths, for example when a club's total
+    // log is maintained elsewhere for their maintenance schedule.
+    const tripLogPath = options.log_path || 'navigation.trip.log';
+    const totalLogPath = options.totals_path || 'navigation.log';
     const subscription = {
       context: 'vessels.self',
       subscribe: [
@@ -91,7 +96,7 @@ module.exports = (app) => {
       const resetTime = logs.current.log.started;
       const values = [
         {
-          path: 'navigation.trip.log',
+          path: tripLogPath,
           value: logs.current.log.total,
         },
         {
@@ -102,7 +107,7 @@ module.exports = (app) => {
       if (options.totals) {
         const base = options.totals_base || 0;
         values.push({
-          path: 'navigation.log',
+          path: totalLogPath,
           value: logs.total.log.total + base,
         });
       }
@@ -132,14 +137,14 @@ module.exports = (app) => {
         .then(() => {
           const values = [
             {
-              path: 'navigation.trip.log',
+              path: tripLogPath,
               value: logs.current.log.total,
             },
           ];
           if (options.totals) {
             const base = options.totals_base || 0;
             values.push({
-              path: 'navigation.log',
+              path: totalLogPath,
               value: logs.total.log.total + base,
             });
           }
@@ -179,6 +184,47 @@ module.exports = (app) => {
         .catch((err) => {
           app.error(`Error:${err}`);
         });
+    }
+
+    function sendMeta() {
+      // Non-standard paths are not in the Signal K schema, so consumers
+      // cannot know their units. Tell the server they are meters.
+      const meta = [];
+      if (tripLogPath !== 'navigation.trip.log') {
+        meta.push({
+          path: tripLogPath,
+          value: {
+            units: 'm',
+            displayName: 'Current trip log',
+            description: 'Distance travelled during the current trip',
+          },
+        });
+      }
+      if (options.totals && totalLogPath !== 'navigation.log') {
+        meta.push({
+          path: totalLogPath,
+          value: {
+            units: 'm',
+            displayName: 'Total log',
+            description: 'Total distance travelled',
+          },
+        });
+      }
+      if (meta.length === 0) {
+        return;
+      }
+      app.handleMessage(plugin.id, {
+        context: `vessels.${app.selfId}`,
+        updates: [
+          {
+            source: {
+              label: plugin.id,
+            },
+            timestamp: (new Date().toISOString()),
+            meta,
+          },
+        ],
+      });
     }
 
     app.subscriptionmanager.subscribe(
@@ -230,6 +276,9 @@ module.exports = (app) => {
       app.error(`Error:${err}`);
     });
 
+    // Declare units for any non-standard paths we publish to
+    sendMeta();
+
     setStatus('Waiting for updates');
   };
 
@@ -246,10 +295,20 @@ module.exports = (app) => {
         default: 10000,
         title: 'How often to update log, in milliseconds',
       },
+      log_path: {
+        type: 'string',
+        default: 'navigation.trip.log',
+        title: 'Signal K path to publish the current trip log to',
+      },
       totals: {
         type: 'boolean',
         default: true,
-        title: 'Publish a total number in navigation.log',
+        title: 'Publish a total number in the total log path',
+      },
+      totals_path: {
+        type: 'string',
+        default: 'navigation.log',
+        title: 'Signal K path to publish the total log to',
       },
       totals_base: {
         type: 'number',
