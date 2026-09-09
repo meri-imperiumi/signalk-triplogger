@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-09
+
 ### Added
 - Option to publish the current trip log (`log_path`) and the total log
   (`totals_path`) under configurable Signal K paths, for setups where the
