@@ -27,34 +27,48 @@ module.exports = (app) => {
     return join(app.getDataDirPath(), `${logName}.json`);
   }
 
+  let logsPrepared = Promise.resolve();
+
   function prepareLogs() {
-    const newLogs = getLogNames();
-    return Promise.all(Object.keys(logs).map((logName) => {
-      // Close old logs
-      if (newLogs.indexOf(logName) === -1) {
-        // If log is not in the new log list, end it
-        const oldLog = logs[logName];
-        delete logs[logName];
-        return oldLog.endTrip();
-      }
-      return Promise.resolve();
-    }))
-      .then(() => Promise.all(newLogs.map((logName) => {
-        // Load new logs
-        if (!logs[logName]) {
-          // New log, or saved log?
-          logs[logName] = new Logger(getLogPath(logName));
-          return logs[logName].exists()
-            .then((exists) => {
-              if (!exists) {
-                // New log, no need to load
-                return Promise.resolve();
-              }
-              return logs[logName].load();
-            });
+    // Serialize preparations: a Logger instance is created synchronously,
+    // but only loaded from disk asynchronously. Without serialization a
+    // second call (for example, a position delta right after a state
+    // delta at startup) would see the instance already in `logs` and
+    // proceed before `load()` has finished, appending to and saving a
+    // fresh zeroed log over the persisted one.
+    const preparation = logsPrepared.then(() => {
+      const newLogs = getLogNames();
+      return Promise.all(Object.keys(logs).map((logName) => {
+        // Close old logs
+        if (newLogs.indexOf(logName) === -1) {
+          // If log is not in the new log list, end it
+          const oldLog = logs[logName];
+          delete logs[logName];
+          return oldLog.endTrip();
         }
         return Promise.resolve();
-      })));
+      }))
+        .then(() => Promise.all(newLogs.map((logName) => {
+          // Load new logs
+          if (!logs[logName]) {
+            // New log, or saved log?
+            const log = new Logger(getLogPath(logName));
+            logs[logName] = log;
+            return log.exists()
+              .then((exists) => {
+                if (!exists) {
+                  // New log, no need to load
+                  return Promise.resolve();
+                }
+                return log.load();
+              });
+          }
+          return Promise.resolve();
+        })));
+    });
+    // Keep the chain usable even if a single preparation fails
+    logsPrepared = preparation.catch(() => {});
+    return preparation;
   }
 
   plugin.start = (options) => {
@@ -141,6 +155,9 @@ module.exports = (app) => {
               },
             ],
           });
+        })
+        .catch((err) => {
+          app.error(`Error:${err}`);
         });
     }
 
@@ -158,6 +175,9 @@ module.exports = (app) => {
             resetTrip();
             setStatus('New trip has started. Log reset');
           }
+        })
+        .catch((err) => {
+          app.error(`Error:${err}`);
         });
     }
 
@@ -203,6 +223,12 @@ module.exports = (app) => {
         });
       },
     );
+
+    // Load persisted logs eagerly so that a trip ongoing from a previous
+    // session is continued when deltas arrive, instead of being reset
+    prepareLogs().catch((err) => {
+      app.error(`Error:${err}`);
+    });
 
     setStatus('Waiting for updates');
   };

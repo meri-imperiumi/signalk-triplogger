@@ -260,6 +260,65 @@ test('totals option also publishes navigation.log', async () => {
   assert.ok(value > 100, `navigation.log value was ${value}`);
 });
 
+test('startup with an ongoing trip continues it instead of resetting to zero', async () => {
+  const app = new FakeSignalKApp();
+  // An ongoing trip from a previous session: started, never ended.
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: null,
+    total: 5000,
+    states: { sailing: 5000 },
+  });
+  const plugin = makePlugin(app);
+  plugin.start({ totals: false });
+
+  // Emit state and positions back-to-back, in the same tick, so they
+  // race against the async log loading from disk. This used to overwrite
+  // current.json with a fresh zeroed log before the saved one was loaded.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(() => app.messages
+    .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+    .some((v) => v.path === 'navigation.trip.log'));
+  plugin.stop();
+
+  // The persisted trip must survive startup: no reset to zero, and the
+  // newly logged distance accumulates on top of the existing total.
+  const current = readLog(app, 'current');
+  assert.ok(
+    current.total >= 5000,
+    `current.total was ${current.total}, expected the ongoing trip to continue`,
+  );
+  assert.ok(
+    !app.statusMessages.some((m) => /new trip/i.test(m.msg)),
+    `unexpected new-trip reset at startup: ${JSON.stringify(app.statusMessages)}`,
+  );
+
+  // The published trip log should also continue from the persisted total.
+  const tripValues = app.messages
+    .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+    .filter((v) => v.path === 'navigation.trip.log');
+  assert.ok(tripValues.length > 0, 'no navigation.trip.log delta was emitted');
+  assert.ok(
+    tripValues[tripValues.length - 1].value >= 5000,
+    `last trip.log value was ${tripValues[tripValues.length - 1].value}`,
+  );
+});
+
 test('stop clears subscriptions', () => {
   const { app, plugin } = makeStarted();
   assert.strictEqual(app.subscriptionmanager.subscriptions.length, 1);

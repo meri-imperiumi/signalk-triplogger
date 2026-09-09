@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Don't overwrite the current trip log at startup: log preparation is now
+  serialized so distance appends and state handling always run against the
+  persisted log once it has finished loading from disk
+
 ## [1.3.2] - 2026-08-23
 
 ### Added
