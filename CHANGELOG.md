@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-09-10
+
 ### Fixed
 - Fix server crash when a log file is corrupt, empty, or not a JSON
   object: parse errors are now caught inside the read callback instead of
