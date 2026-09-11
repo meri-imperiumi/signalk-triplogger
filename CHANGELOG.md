@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fix server crash when a log file is corrupt, empty, or not a JSON
+  object: parse errors are now caught inside the read callback instead of
+  escaping as an uncaught exception that killed signalk-server. The bad
+  file is backed up as `<name>.json.corrupt` and a fresh log is started
+- Persist logs atomically (temp file + fsync + rename) so a crash or
+  power loss mid-write can no longer truncate log files
+
 ## [1.4.0] - 2026-09-09
 
 ### Added

@@ -52,7 +52,10 @@ module.exports = (app) => {
           // Load new logs
           if (!logs[logName]) {
             // New log, or saved log?
-            const log = new Logger(getLogPath(logName));
+            const log = new Logger(
+              getLogPath(logName),
+              (message) => app.error(message),
+            );
             logs[logName] = log;
             return log.exists()
               .then((exists) => {

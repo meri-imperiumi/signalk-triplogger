@@ -471,6 +471,52 @@ test('standard paths send no meta messages', () => {
   plugin.stop();
 });
 
+test('a corrupt persisted log is backed up and logging continues', async () => {
+  const app = new FakeSignalKApp();
+  // A log truncated by a crash mid-write. With the old code this threw
+  // an uncaught exception from the readFile callback, killing the whole
+  // server process on every startup.
+  const corrupt = '{"started": "2026-09-11T00:00:00.000Z", "total": 5000';
+  writeFileSync(join(app.dataPath, 'current.json'), corrupt, 'utf-8');
+  const plugin = makePlugin(app);
+  plugin.start({ totals: false });
+
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(() => app.messages
+    .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+    .some((v) => v.path === 'navigation.trip.log' && v.value > 0));
+  plugin.stop();
+
+  // The corrupt contents are preserved for manual recovery...
+  assert.strictEqual(
+    readFileSync(join(app.dataPath, 'current.json.corrupt'), 'utf-8'),
+    corrupt,
+  );
+  // ...and the corruption was reported
+  assert.ok(
+    app.errors.some((e) => /corrupt/i.test(e)),
+    `got ${JSON.stringify(app.errors)}`,
+  );
+  // Logging continues from a fresh log
+  const current = readLog(app, 'current');
+  assert.ok(current.total > 0, `current.total was ${current.total}`);
+});
+
 test('stop clears subscriptions', () => {
   const { app, plugin } = makeStarted();
   assert.strictEqual(app.subscriptionmanager.subscriptions.length, 1);

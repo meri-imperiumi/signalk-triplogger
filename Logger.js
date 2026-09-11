@@ -1,15 +1,24 @@
 const fs = require('fs');
+const { promisify } = require('util');
+
+const fsWriteFile = promisify(fs.writeFile);
+const fsOpen = promisify(fs.open);
+const fsFsync = promisify(fs.fsync);
+const fsClose = promisify(fs.close);
+const fsRename = promisify(fs.rename);
 
 function toNM(meters) {
   return (meters / 1852).toFixed(2);
 }
 
 class Logger {
-  constructor(filename) {
+  constructor(filename, onError) {
     this.state = null;
     this.filename = filename;
+    this.onError = onError;
     this.reset();
     this.unsaved = false;
+    this.saves = Promise.resolve();
   }
 
   reset() {
@@ -70,18 +79,36 @@ class Logger {
   }
 
   save() {
+    // Serialize writes: concurrent saves writing to the same temp file
+    // could interleave, and an older snapshot could be renamed over a
+    // newer one. Each save runs only after the previous one settles.
+    const previous = this.saves;
+    this.saves = previous.then(
+      () => this.write(),
+      () => this.write(),
+    );
+    return this.saves;
+  }
+
+  async write() {
     if (!this.unsaved) {
-      return Promise.resolve();
+      return;
     }
-    return new Promise((resolve, reject) => {
-      fs.writeFile(this.filename, JSON.stringify(this.log, null, 2), (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    const tmpFile = `${this.filename}.tmp`;
+    await fsWriteFile(tmpFile, JSON.stringify(this.log, null, 2));
+    // Flush the temp file to disk before renaming: without fsync, a
+    // power loss can persist the rename while the file's contents never
+    // made it to disk, recreating a truncated log
+    const fd = await fsOpen(tmpFile, 'r+');
+    try {
+      await fsFsync(fd);
+    } finally {
+      await fsClose(fd);
+    }
+    // Rename over an existing file is atomic: readers see either the
+    // old log or the new one, never a partially written one
+    await fsRename(tmpFile, this.filename);
+    this.unsaved = false;
   }
 
   exists() {
@@ -103,9 +130,29 @@ class Logger {
           reject(err);
           return;
         }
-        this.log = JSON.parse(contents);
-        this.unsaved = false;
-        resolve();
+        try {
+          const parsed = JSON.parse(contents);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Not a JSON object');
+          }
+          this.log = parsed;
+          this.unsaved = false;
+          resolve();
+        } catch (parseError) {
+          // Corrupt (for example truncated by a crash mid-write) or empty
+          // log file. Back it up for manual recovery and start a fresh log
+          // instead of failing the whole plugin.
+          const backup = `${this.filename}.corrupt`;
+          fs.rename(this.filename, backup, () => {
+            this.reset();
+            if (this.onError) {
+              this.onError(
+                `Corrupt log file ${this.filename} (${parseError.message}). Backed up to ${backup}, starting a fresh log`,
+              );
+            }
+            resolve();
+          });
+        }
       });
     });
   }
