@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-05
+
 ### Changed
 - Bump the `where` dependency to `^0.4.3`, which fixes its bearing calculations across the antimeridian. Triplogger itself only uses `distanceTo` (already seam-safe), but the bump keeps the antimeridian-fixed upstream version pinned for any future bearing use
 
