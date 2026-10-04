@@ -523,3 +523,52 @@ test('stop clears subscriptions', () => {
   plugin.stop();
   assert.strictEqual(app.subscriptionmanager.subscriptions.length, 0);
 });
+
+test('a trip crossing the antimeridian accumulates the short-way distance', async () => {
+  // A boat drifting a few meters east across 180° longitude: the next
+  // fix reads as -179.9999 (GPS wraps to [-180, 180]). The distance
+  // between the fixes is ~22 m at the equator, not the ~20 000 km the
+  // naive longitude difference suggests — the trip total must stay small.
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  await waitFor(() => app.statusMessages.some((m) => /new trip/i.test(m.msg)));
+
+  // First fix just east of the seam.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: -14.2, longitude: 179.9999 } }] },
+    ],
+  });
+  // Second fix just west of the seam (wrapped) — ~22 m further east.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: -14.2, longitude: -179.9999 } }] },
+    ],
+  });
+  await waitFor(() => {
+    const tripValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
+    return !!tripValue;
+  });
+  plugin.stop();
+
+  const current = readLog(app, 'current');
+  assert.ok(
+    current.total > 0 && current.total < 1000,
+    `seam crossing logged ${current.total} m; expected the short way (~22 m)`,
+  );
+});
