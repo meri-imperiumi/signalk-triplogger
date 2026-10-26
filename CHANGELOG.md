@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-10-26
+
+### Fixed
+- Ignore implausible `navigation.position` input instead of corrupting the trip log: NULL values no longer throw `Cannot read properties of null (reading 'latitude')`, and null coordinates no longer count as a fix at 0,0 ("null island") since `Number(null)` is 0
+- Skip any position change that implies more than the maximum plausible speed (new `max_speed` option, default 100kn), keeping the last good fix as reference so the matching jump back to the real position is not counted either; skipped jumps are reported via `app.error` and updates with non-advancing timestamps are skipped as well
+
 ## [1.4.2] - 2026-10-05
 
 ### Changed
