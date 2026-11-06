@@ -70,6 +70,27 @@ function readLog(app, name) {
 }
 
 /**
+ * Poll until the persisted current log's total reaches `min` meters.
+ * Checks the file rather than emitted deltas: a delta carries the
+ * in-memory total, which can already reflect a later appendTrip while
+ * that append's racing save has not been renamed into place yet.
+ *
+ * @param {FakeSignalKApp} app
+ * @param {number} min
+ * @returns {Promise<boolean>}
+ */
+function waitForLogTotal(app, min) {
+  return waitFor(() => {
+    try {
+      return readLog(app, 'current').total >= min;
+    } catch (err) {
+      // Log file not written yet
+      return false;
+    }
+  });
+}
+
+/**
  * Pre-seed a log file in the app's data dir before start, so the Logger
  * loads an existing state instead of starting fresh. Used to make the
  * "new trip" transition deterministic without racing two state emits.
@@ -613,12 +634,7 @@ test('null position values are ignored without crashing or logging Null Island',
       { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
     ],
   });
-  await waitFor(() => {
-    const tripValue = app.messages
-      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
-      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
-    return !!tripValue;
-  });
+  await waitForLogTotal(app, 100);
   plugin.stop();
 
   assert.strictEqual(app.errors.length, 0, `got ${JSON.stringify(app.errors)}`);
@@ -673,12 +689,7 @@ test('implausible position jumps are skipped together with the matching jump bac
       { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
     ],
   });
-  await waitFor(() => {
-    const tripValue = app.messages
-      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
-      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
-    return !!tripValue;
-  });
+  await waitForLogTotal(app, 100);
   plugin.stop();
 
   assert.ok(
@@ -722,12 +733,7 @@ test('updates with non-advancing timestamps are skipped', async () => {
   emitDelta(app, update('2026-11-02T17:00:00.000Z', 60.001));
   // An advancing timestamp with a plausible move counts normally.
   emitDelta(app, update('2026-11-02T17:00:10.000Z', 60.001));
-  await waitFor(() => {
-    const tripValue = app.messages
-      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
-      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
-    return !!tripValue;
-  });
+  await waitForLogTotal(app, 100);
   plugin.stop();
 
   const current = readLog(app, 'current');
