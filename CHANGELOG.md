@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-11-06
+
 ### Fixed
 - Actually implement the position glitch handling that 1.4.3 described but whose release commit only touched metadata: null or missing `navigation.position` values are ignored instead of throwing `Cannot read properties of null (reading 'latitude')` or counting as a fix at Null Island (0,0), and position changes implying more than the new `max_speed` option (default 100kn) are skipped via `app.error`, keeping the last good fix as reference so the matching jump back is not counted either. Updates with non-advancing timestamps are skipped as well
 - Fix lost distance updates in the log files: a `save()` racing a later `appendTrip()` could flip the unsaved flag so the newer distance was never persisted to disk; saves now snapshot the log state at call time
