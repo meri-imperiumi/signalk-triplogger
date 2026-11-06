@@ -6,6 +6,7 @@ module.exports = (app) => {
   const plugin = {};
   let unsubscribes = [];
   let lastPosition = null;
+  let lastTimestamp = NaN;
   const logs = {};
 
   plugin.id = 'signalk-triplogger';
@@ -80,6 +81,10 @@ module.exports = (app) => {
     // log is maintained elsewhere for their maintenance schedule.
     const tripLogPath = options.log_path || 'navigation.trip.log';
     const totalLogPath = options.totals_path || 'navigation.log';
+    // Position changes implying a faster speed than this are treated as
+    // glitches (for example a jump to Null Island and back) and skipped
+    const maxSpeed = (typeof options.max_speed === 'number'
+      ? options.max_speed : 100) * (1852 / 3600);
     const subscription = {
       context: 'vessels.self',
       subscribe: [
@@ -250,16 +255,40 @@ module.exports = (app) => {
               handleState(v.value);
             }
             if (v.path === 'navigation.position') {
-              if (!v.path || Number.isNaN(Number(v.value.latitude))
-                || Number.isNaN(Number(v.value.longitude))) {
+              const { latitude, longitude } = v.value || {};
+              // Null or missing coordinates must not throw or become a
+              // fix at Null Island (Number(null) is 0)
+              if (latitude === null || latitude === undefined
+                || longitude === null || longitude === undefined
+                || Number.isNaN(Number(latitude))
+                || Number.isNaN(Number(longitude))) {
                 return;
               }
-              const newPosition = new Point(v.value.latitude, v.value.longitude);
+              const newPosition = new Point(Number(latitude), Number(longitude));
+              const timestamp = Date.parse(u.timestamp);
               if (lastPosition) {
+                // Replayed or stale updates with non-advancing
+                // timestamps would double-count distance
+                if (!Number.isNaN(timestamp) && !Number.isNaN(lastTimestamp)
+                  && timestamp <= lastTimestamp) {
+                  return;
+                }
                 const distance = lastPosition.distanceTo(newPosition) * 1000;
+                // Fall back to the configured subscription period when
+                // the source does not timestamp its updates
+                const elapsed = Number.isNaN(timestamp) || Number.isNaN(lastTimestamp)
+                  ? (options.update_interval || 10000) / 1000
+                  : (timestamp - lastTimestamp) / 1000;
+                if (distance / elapsed > maxSpeed) {
+                  // Keep the last good fix as reference so also the
+                  // matching jump back to the real position is skipped
+                  app.error(`Skipped implausible position change of ${(distance / 1852).toFixed(1)}NM (${((distance / elapsed) * (3600 / 1852)).toFixed(1)}kn)`);
+                  return;
+                }
                 appendTrip(distance);
               }
               lastPosition = newPosition;
+              lastTimestamp = timestamp;
               if (logs.current) {
                 if (logs.current.inTrip()) {
                   setStatus(`Under way: ${logs.current}`);
@@ -297,6 +326,11 @@ module.exports = (app) => {
         type: 'number',
         default: 10000,
         title: 'How often to update log, in milliseconds',
+      },
+      max_speed: {
+        type: 'number',
+        default: 100,
+        title: 'Maximum plausible speed in knots, larger position changes are skipped',
       },
       log_path: {
         type: 'string',

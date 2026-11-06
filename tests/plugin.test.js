@@ -572,3 +572,168 @@ test('a trip crossing the antimeridian accumulates the short-way distance', asyn
     `seam crossing logged ${current.total} m; expected the short way (~22 m)`,
   );
 });
+
+test('null position values are ignored without crashing or logging Null Island', async () => {
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  await waitFor(() => app.statusMessages.some((m) => /new trip/i.test(m.msg)));
+
+  // Entire value missing, and value with null coordinates: both must be
+  // ignored (Number(null) is 0, so a NaN check alone would treat them as
+  // a fix at 0,0).
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: null }] },
+      { values: [{ path: 'navigation.position', value: { latitude: null, longitude: null } }] },
+    ],
+  });
+
+  // A real fix after the nulls: the trip must not include any 0,0 jump.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(() => {
+    const tripValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
+    return !!tripValue;
+  });
+  plugin.stop();
+
+  assert.strictEqual(app.errors.length, 0, `got ${JSON.stringify(app.errors)}`);
+  const current = readLog(app, 'current');
+  assert.ok(
+    current.total > 0 && current.total < 1000,
+    `null coordinates logged ${current.total} m; expected only the ~111 m real move`,
+  );
+});
+
+test('implausible position jumps are skipped together with the matching jump back', async () => {
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  await waitFor(() => app.statusMessages.some((m) => /new trip/i.test(m.msg)));
+
+  // First fix establishes the reference.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  // Glitch: ~1000 km away (no timestamps, so the configured 10 s update
+  // period gives ~54 000 kn), then the matching jump back near the start.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 65.0, longitude: 24.0 } }] },
+    ],
+  });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.0, longitude: 24.0 } }] },
+    ],
+  });
+  // A normal small move afterwards must still be counted.
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [
+      { values: [{ path: 'navigation.position', value: { latitude: 60.001, longitude: 24.0 } }] },
+    ],
+  });
+  await waitFor(() => {
+    const tripValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
+    return !!tripValue;
+  });
+  plugin.stop();
+
+  assert.ok(
+    app.errors.some((m) => /implausible/i.test(m)),
+    `expected skip reports, got ${JSON.stringify(app.errors)}`,
+  );
+  const current = readLog(app, 'current');
+  assert.ok(
+    current.total > 0 && current.total < 1000,
+    `glitch logged ${current.total} m; expected only the ~111 m real move`,
+  );
+});
+
+test('updates with non-advancing timestamps are skipped', async () => {
+  const app = new FakeSignalKApp();
+  seedLog(app, 'current', {
+    started: '2026-01-01T00:00:00.000Z',
+    ended: '2026-01-01T01:00:00.000Z',
+    total: 0,
+    states: {},
+  });
+  const plugin = makePlugin(app);
+  plugin.start({ totals: true });
+  emitDelta(app, {
+    context: 'vessels.self',
+    updates: [{ values: [{ path: 'navigation.state', value: 'sailing' }] }],
+  });
+  await waitFor(() => app.statusMessages.some((m) => /new trip/i.test(m.msg)));
+
+  const update = (timestamp, latitude) => ({
+    context: 'vessels.self',
+    updates: [
+      {
+        timestamp,
+        values: [{ path: 'navigation.position', value: { latitude, longitude: 24.0 } }],
+      },
+    ],
+  });
+  emitDelta(app, update('2026-11-02T17:00:00.000Z', 60.0));
+  // Replayed delta with the same timestamp must not count again.
+  emitDelta(app, update('2026-11-02T17:00:00.000Z', 60.001));
+  // An advancing timestamp with a plausible move counts normally.
+  emitDelta(app, update('2026-11-02T17:00:10.000Z', 60.001));
+  await waitFor(() => {
+    const tripValue = app.messages
+      .flatMap(({ message }) => message.updates.flatMap((u) => u.values))
+      .find((v) => v.path === 'navigation.trip.log' && v.value > 0);
+    return !!tripValue;
+  });
+  plugin.stop();
+
+  const current = readLog(app, 'current');
+  // 0.001° of latitude is ~111 m; a double count would be ~222 m.
+  assert.ok(
+    current.total > 0 && current.total < 200,
+    `replayed update logged ${current.total} m; expected a single ~111 m move`,
+  );
+});

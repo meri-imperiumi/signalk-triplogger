@@ -82,20 +82,25 @@ class Logger {
     // Serialize writes: concurrent saves writing to the same temp file
     // could interleave, and an older snapshot could be renamed over a
     // newer one. Each save runs only after the previous one settles.
+    // Snapshot the serialized state at call time: a later appendTrip
+    // before the write executes must not leak into an earlier file
+    // version, and its own save carries the newer snapshot instead.
+    const snapshot = this.unsaved ? JSON.stringify(this.log, null, 2) : null;
+    this.unsaved = false;
     const previous = this.saves;
     this.saves = previous.then(
-      () => this.write(),
-      () => this.write(),
+      () => this.write(snapshot),
+      () => this.write(snapshot),
     );
     return this.saves;
   }
 
-  async write() {
-    if (!this.unsaved) {
+  async write(snapshot) {
+    if (!snapshot) {
       return;
     }
     const tmpFile = `${this.filename}.tmp`;
-    await fsWriteFile(tmpFile, JSON.stringify(this.log, null, 2));
+    await fsWriteFile(tmpFile, snapshot);
     // Flush the temp file to disk before renaming: without fsync, a
     // power loss can persist the rename while the file's contents never
     // made it to disk, recreating a truncated log
@@ -108,7 +113,6 @@ class Logger {
     // Rename over an existing file is atomic: readers see either the
     // old log or the new one, never a partially written one
     await fsRename(tmpFile, this.filename);
-    this.unsaved = false;
   }
 
   exists() {
